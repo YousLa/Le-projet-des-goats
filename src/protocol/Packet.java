@@ -78,9 +78,9 @@ public class Packet {
         // 2. On sélectionne les 16bits de totalSize et on les insère dans notre ByteArrayOutputStream
          On s'occupe du Big Endian uniquement */
         int padding = 0xFF;
-        byte [] totalSize1 = ((totalSize >> 8) & padding);
+        byte [] totalSize1 = new byte[]{(byte)totalSize, (byte)padding};
         baos.write(totalSize1);
-        System.out.println(baos.toByteArray());
+        System.out.println(baos);
         System.out.println(test);
 
 
