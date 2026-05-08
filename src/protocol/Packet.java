@@ -38,7 +38,7 @@ public class Packet {
         int header = 5;
         this.totalSize =  header + data.length;
         this.sequenceNumber = 5;
-        this.syn = 0;
+        this.syn = 1;
         this.ack = 0;
         this.fin = 0;
         this.rst = 0;
@@ -91,30 +91,47 @@ public class Packet {
 
     }
 
-    public Packet decode(byte[] data){
+    public static Packet decode(byte[] data){
 
         /* 1. D'abord on vérifie que les données en entré ne soient pas null et supérieur ou égal à 5 (5 bytes => 2 bytes totalSize + 2 bytes
         Numéro de séquence + 1 byte flags) */
         if (data != null && data.length >= 5) {
-            // 2. On extrait le totalSize data[0] byte fort et data[1] byte faible
+
+            ByteBuffer buf = ByteBuffer.wrap(data);
+            buf.order(ByteOrder.BIG_ENDIAN);
+
+            // 2. totalSize
+            int totalSize = buf.getShort() & 0xFFFF;
+            System.out.println("totalSize : " + totalSize);
+
+            // 3. sequenceNumber
+            int sequenceNumber = buf.getShort() & 0xFFFF;
+            System.out.println("sequenceNumber : " + sequenceNumber);
 
 
-            // 3. On extrait le sequenceNumber data[2] byte fort et data[3] byte faible
-            ByteBuffer buf = ByteBuffer.allocate(2);
-            buf.put(data[2]);
-            System.out.println(data[2]);
-            buf.put(data[3]);
-            System.out.println(data[3]);
-            short result = buf.getShort();
-            System.out.println("result : " + result);
+            // 4. flags
+            int flags = buf.get() & 0xFF;
+            int syn = (flags >> 3) & 1;
+            int ack = (flags >> 2) & 1;
+            int fin = (flags >> 1) & 1;
+            int rst = flags & 1;
+            System.out.println("flags : syn=" + syn + " ack=" + ack + " fin=" + fin + " rst=" + rst);
 
-            // 4. On extrait les flags data[4]
+            // 5. données
+            byte[] payload = new byte[buf.remaining()];
+            buf.get(payload);
+            System.out.println("payload : " + Arrays.toString(payload));
 
-            // 5. On extrait les données s'il y en a  data[5] jusqu'à data.length -1
+            Packet p = new Packet(payload);
+            p.sequenceNumber = sequenceNumber;
+            p.syn = syn;
+            p.ack = ack;
+            p.fin = fin;
+            p.rst = rst;
+            return p;
 
         } else {
             throw new IllegalArgumentException("Invalid packet data");
         }
-        return null;
     }
 }
