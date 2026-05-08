@@ -2,6 +2,9 @@ package protocol;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.Arrays;
 
 
 public class Packet {
@@ -18,10 +21,10 @@ public class Packet {
 
     // Booléens seront stocké dans 1 byte plus tard (8 bits)
     // Booléen ici et transformé en bit plus tard avec la classe PacketCodec (4bits)
-    public boolean syn;
-    public boolean ack;
-    public boolean fin;
-    public boolean rst;
+    public int syn;
+    public int ack;
+    public int fin;
+    public int rst;
 
     // Les données transmises
     public byte[] data;
@@ -34,11 +37,11 @@ public class Packet {
         // totale + 2 bytes numéro de séquence + 1 byte flags + les données
         int header = 5;
         this.totalSize =  header + data.length;
-        this.sequenceNumber = 1;
-        this.syn = false;
-        this.ack = false;
-        this.fin = false;
-        this.rst = false;
+        this.sequenceNumber = 5;
+        this.syn = 0;
+        this.ack = 0;
+        this.fin = 0;
+        this.rst = 0;
         this.data = data;
     }
 
@@ -53,46 +56,8 @@ public class Packet {
     // Transformer un objet Packet en byte[] (envoie UDP) et transformer un byte[] en Packet
     public byte [] encode() throws IOException {
 
-        /* On doit utiliser ByteArrayOutputStream pour écrire les bytes dans un tableau en mémoire sans avoir la
-        // taille finale à l'avance
 
-        // 1. On crée un flux mémoire vide qui va accueillir les bytes au fur et à mesure qu'on avance pour finalement le transformer en tableau de
-         byte */
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-
-
-        String test = baos.toString();
-
-        /* On doit écrire totalSize sur 16 bits NON SIGNÉ mais en Java un int est codé sur 32 bits
-        // On doit donc extraire uniquement les 16 bits utiles et les envoyer sur le réseau
-
-        // On nous impose le format Big Endian, donc Byte fort d'abord et Byte faible après
-
-        // Pour obtenir le byte fort, on décale totalSize de 8 bits vers la droite
-        // puis on pose le masque & 0xFF pour garder que 8 bits
-        // Pour le byte faible on garde directement les 8 bits de droite avec & 0xFF.
-
-        // Avec masque 0xFF on dégage les bits inutiles et on enlève les signes (+ -)
-        // 0x = hexadécimal, base 16 (int 32bits en java)
-
-        // 2. On sélectionne les 16bits de totalSize et on les insère dans notre ByteArrayOutputStream
-         On s'occupe du Big Endian uniquement */
-        int padding = 0xFF;
-        byte [] totalSize1 = new byte[]{(byte)totalSize, (byte)padding};
-        baos.write(totalSize1);
-        System.out.println(baos);
-        System.out.println(test);
-
-
-
-        // 3. On sélectionne les 16 bits de sequenceNumber en BigEndian et les insère dans baos comme on à fait pour le totalSize
-        baos.write((sequenceNumber >> 8) & padding);
-        System.out.println(baos.toByteArray());
-        System.out.println(test);
-
-
-
-        /* 3. Maintenant on doit regrouper les flags dans un byte et les rajouter à la suite dans baos
+             /* 3. Maintenant on doit regrouper les flags dans un byte et les rajouter à la suite dans baos
         // Les flags sont au format booléen chacun seront sur un bit
         //.... SYN ACK FIN RST on comble les 4 autres bits à 0
         // 0b = binaire, base 2
@@ -102,41 +67,46 @@ public class Packet {
         // bit 1 = FIN
          bit 0 = RST */
         int flags = 0;
-        if (syn) flags |= 0b00001000;
-        if (ack) flags |= 0b00000100;
-        if (fin) flags |= 0b00000010;
-        if (rst) flags |= 0b00000001;
+        if (syn == 1) flags |= 0b00001000;
+        if (ack == 1) flags |= 0b00000100;
+        if (fin == 1) flags |= 0b00000010;
+        if (rst == 1) flags |= 0b00000001;
 
-        // Ici pas besoin de masque car baos.write prend que les 8bits de droite
-        baos.write(flags);
-        System.out.println(baos.toByteArray());
-        System.out.println(test);
+        ByteBuffer buf = ByteBuffer.allocate(totalSize);
+        buf.order(ByteOrder.BIG_ENDIAN);
 
+        buf.putShort((short) totalSize);
+        System.out.println("après totalSize : " + Arrays.toString(buf.array()));
 
-        /* 4. On rajoute les données à envoyer
-        Voir si data est non null et plus grand que 0 */
-        if (data != null && data.length > 0){
-            // Ici java ajoute les données byte par byte dans la baos
-            baos.write(data);
-            System.out.println(baos.toByteArray());
-            System.out.println(test);
+        buf.putShort((short) sequenceNumber);
+        System.out.println("après sequenceNumber : " + Arrays.toString(buf.array()));
 
+        buf.put((byte) flags);
+        System.out.println("après flags : " + Arrays.toString(buf.array()));
 
+        if (data != null && data.length > 0) buf.put(data);
+        System.out.println("final : " + Arrays.toString(buf.array()));
 
-        }
+        return buf.array();
 
-        // 5. tout passé dans un tableau de byte et le renvoyer
-        return baos.toByteArray();
     }
 
-    /* public static Packet decode(byte[] data){
+    public Packet decode(byte[] data){
 
         /* 1. D'abord on vérifie que les données en entré ne soient pas null et supérieur ou égal à 5 (5 bytes => 2 bytes totalSize + 2 bytes
-        Numéro de séquence + 1 byte flags)
+        Numéro de séquence + 1 byte flags) */
         if (data != null && data.length >= 5) {
             // 2. On extrait le totalSize data[0] byte fort et data[1] byte faible
 
+
             // 3. On extrait le sequenceNumber data[2] byte fort et data[3] byte faible
+            ByteBuffer buf = ByteBuffer.allocate(2);
+            buf.put(data[2]);
+            System.out.println(data[2]);
+            buf.put(data[3]);
+            System.out.println(data[3]);
+            short result = buf.getShort();
+            System.out.println("result : " + result);
 
             // 4. On extrait les flags data[4]
 
@@ -145,10 +115,6 @@ public class Packet {
         } else {
             throw new IllegalArgumentException("Invalid packet data");
         }
-    } */
+        return null;
+    }
 }
-
-
-
-
-

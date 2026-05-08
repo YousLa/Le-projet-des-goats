@@ -8,5 +8,7 @@ public class Main {
         String phrase = "Yo!";
         Packet paquet = new Packet(phrase.getBytes());
         paquet.encode();
+        byte[] paquet2 = paquet.encode();
+        paquet.decode(paquet2);
     }
 }
