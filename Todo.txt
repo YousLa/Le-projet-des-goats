@@ -1,0 +1,215 @@
+============================================================
+1. Création d’un paquet => class Packet
+============================================================
+
+°° Un paquet est l'unité de communication de base entre l'émetteur et le récepteur. Il transporte à
+la fois des données et des informations de contrôle. °°
+
+    Champs d'un paquet :
+
+        - totalSize => 16bits - non signé
+            °° Taille totale du paquet (header + data).
+
+                Utilité :
+                - Vérifier l'intégrité du paquet
+                - Savoir combien d'octets lire
+                - Détecter un paquet tronqué ou invalide
+
+        - sequenceNumber => 16 bits - non signé
+            °° Numéro d'ordre du paquet °°
+
+                Permet :
+                - Remettre les paquets dans le bon ordre
+                - Détecter les pertes
+                - D'ignorer les doublons
+
+            !! Ce n'est PAS un numéro de byte mais un numéro de paquet. Valeurs possibles : 0 à
+            65535 !!
+
+        - Flags :
+            °° Les flags sont des indicateurs de l'état de la connexion °°
+                - SYN : Demande d'ouverture de connexion
+                - ACK : Confirmation de réception
+                - FIN : Fin normale de transmission
+                - RST : Arrêt immédiat en cas d'erreur
+
+        !! Les flags ne transportent pas de données, ils donnent du contexte !!
+
+        - Data => bytes
+            Contient :
+                - Soit des morceaux du fichier
+                - Soit des informations de contrôle (ex: numéro ACK)
+            !! Peut être vide (paquet SYN, FIN, etc.) !!
+
+============================================================
+2. Encodage / décodage => class PacketCodec
+============================================================
+
+Objectif :
+    Transformer un objet Packet en byte[] (envoie UDP) et transformer un byte[] en Packet
+    (réception UDP)
+
+    - Méthode encode(Packet) :
+        - Convertit totalSize et sequenceNumber en BIG ENDIAN,
+            ** la norme réseau pour assurer la compatibilité entre machines **
+        - Combine les flags dans un seul byte
+            ** les bits 4,5,6 et 7 non utilisés et les bits 0,1,2 et 3 des flags => SYN, ACK, FIN,
+            RST **
+        - Ajoute les données du paquet à la fin
+
+    - Méthode decode(byte[]) :
+        - Lit les 2 premiers bytes => totalSize
+        - Lit les 2 bytes suivants => sequenceNumber
+        - Lit le byte des flags => détermine SYN / ACK / FIN / RST
+        - Copie le reste du tableau dans data
+
+    °° Une erreur ici casse tout le protocole, c'est la base de la communication °°
+
+============================================================
+3. Fenêtre glissante => class Window
+============================================================
+
+Objectif :
+    Gérer les paquets envoyés mais pas encore confirmés (ACK)
+    °° Pour gérer la "fenêtre glissante" côté émetteur, c'est-à-dire la liste des paquets envoyés
+    mais pas encore confirmés par le récepteur °°
+
+Fenêtre glissante :
+    - Liste des paquets en attente d'ACK
+    - Taille maximale : 256
+        °° 256 => Compromis entre performance et complexité. Trop petit = lent, Trop grand =
+        surchage mémoire/réseau, Valeur classique et facile à gérer.
+
+    - Fonctionnalités :
+        - canSend(nextSeq) :
+            Vérifie si la fenêtre n'est pas pleine
+    - add(Packet) :
+        - Ajoute un paquet envoyé dans la fenêtre
+    - ackUpTo(seq) :
+        - Supprime tous les paquets confirmés
+    - unackedPackets()
+        - Retourne les paquets à retransmettre (non ACKés)
+
+Stratégie :
+    Permet d'envoyer plusieurs paquets sans attendre chaque ACK, ce qui augmente fortement le débit.
+
+============================================================
+4. Émetteur => class Sender
+============================================================
+
+Objectif :
+    Gérer l'ouverture de connexion, l'envoi fiable, la retransmission et la fermeture.
+
+    - Handshake (SYN => SYN + ACK => ACK) :
+        - SYN : L'émetteur demande une connexion
+        - SYN + ACK : Le récepteur accepte et répond
+        - ACK : Confirmation finale de l'émetteur
+
+    Pourquoi ? :
+        On crée une connexion logique pour :
+            - Synchroniser les numéros de séquence
+            - S'assurer que les deux côtés sont prêts
+
+    - Retry :
+        - Maximum 3 tentatives pour éviter les boucles infinies, standard simple et efficace
+
+    - Envoi des données :
+        - Découpage du fichier en chunks (ex. 1000 bytes)
+            ** Pratique pour gérer les numéros de séquence et retransmissions **
+        - Chaque paquet à un numéro de séquence incrémental
+        - Si la window est pleine, on attend des ACKs
+
+    - Retransmission :
+        - Timeout : Si aucun ACK n'est reçu, le paquet est considéré perdu
+        - Fast retransmit : Si le même ACK est reçu 3 fois :
+            => Le récepteur signale implicitement un paquet manquant
+            => Retransmission immédiate sans attendre le timeout
+
+    - Fermeture de connexion :
+        - FIN => attendre FIN + ACK => envoyer dernier ACK
+            °° 3 étapes => Garantit que tout a été reçu, évite une fermeture trop brutale => protège
+             la fin du fichier °°
+
+============================================================
+5. Récepteur => class Receiver
+============================================================
+
+Objectif :
+    Recevoir les paquets, les remettre dans l'ordre, envoyer des ACKS et écrire le fichier.
+
+    Réception des paquets :
+        - Si sequenceNumber == attendu :
+            => Ecrire dans le fichier de destination
+            => Avancer expectedSeq
+        - Si sequenceNumber > attendu :
+            => Paquet reçu en avance
+            => Le stocker temporairement (buffer)
+        - Si déjà reçu :
+            => Duplicate, on ignore
+
+    °° Buffer - Mémoire temporaire pour les paquets reçus hors ordre °°
+
+### A VERIFIER - A VERIFIER - A VERIFIER - A VERIFIER - A VERIFIER - A VERIFIER - A VERIFIER ###
+    ACK cumulatif :
+        - Indique le dernier paquet reçu de manière continue
+        - Plus efficace qu'un ACK par paquet
+        - Simplifie la retransmission côté émetteur
+### A VERIFIER - A VERIFIER - A VERIFIER - A VERIFIER - A VERIFIER - A VERIFIER - A VERIFIER ###
+
+    - Handshake côté serveur :
+        - Attendre SYN => envoyer SYN + ACK => attendre ACK
+
+    - Gestion des flags :
+        - FIN : fin normale => répondre FIN + ACK
+        - RST : fermeture immédiate => écrire ce qui est reçu et arrêter la connexion
+
+    °° Importance : ACK cumulatif + buffer assure la fiabilité malgré pertes ou réceptions hors
+    ordre °°
+
+============================================================
+6. Création du programme client
+============================================================
+
+    - Lire le fichier à envoyer
+    - Initialiser le Sender avec socket et adresse du récepteur
+    - Faire handshake
+    - Envoyer les données avec retransmission si nécessaire
+    - Fermer proprement la connexion (FIN => FIN + ACK => ACK)
+
+    (différence entre client, serveur, sender, receiver ? donner les différences situation possible
+    et les expliquers tout au long du doc txt)
+
+============================================================
+7. Programme serveur
+============================================================
+
+    - Écouter sur le port choisi
+    - Initialiser le Receiver avec le fichier de sortie
+    - Faire handshake avec l'émetteur (accepter une connexion logique)
+    - Lance la boucle de réception de paquets
+    - Gérer FIN et RST
+    - Fermer fichier et la socket proprement
+
+============================================================
+8. Tests et vérifications
+============================================================
+
+    - Vérifier que le fichier reçu est identique à l'original
+    - Tester :
+        - Perte de paquets simulée (pour tester retransmission)
+        - Paquets hors ordre (pour tester buffer)
+        - Duplications
+        - Fermeture normale
+        - RST
+    - Debug :
+        - afficher numéros de séquence, flags, ACKs pour suivi
+
+
+============================================================
+Points critiques à vérifier
+============================================================
+
+    - Padding correct des flags
+    - Big endian respecté
+    - Taille minimale du paquet (>= 5 bytes)
+    - Gestion correcte des numéros de séquence
